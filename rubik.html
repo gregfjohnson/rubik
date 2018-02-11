@@ -1,0 +1,897 @@
+<!-- vim: shiftwidth=2
+-->
+<!--
+  Copyright (C) 2017, Greg Johnson
+  Released under the terms of the GNU GPL v2.0.
+ 
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  Refer to the
+  GNU General Public License for more details.
+
+  inspired by https://github.com/joews/rubik-js, Joe Whitfield-Seed, 2013
+-->
+
+<!DOCTYPE html>
+  <html lang="en">
+
+  <head>
+    <title>Rubik's cube</title>
+    <meta charset="utf-8">
+    <link href="style.css" rel="stylesheet">
+    <meta name="viewport"
+          content="width=device-width,
+          user-scalable=no,
+          minimum-scale=1.0,
+          maximum-scale=1.0">
+
+    <style>
+      body {
+        margin: 0px;
+        background-color: #000000;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+
+  <body>
+    <ul id="controls">
+      <li><a href="#scramble" id="button-scramble">Scramble</a></li>
+      <li><a href="#unscramble1" id="button-unscramble-1">1</a></li>
+      <li><a href="#unscramble2" id="button-unscramble-2">2</a></li>
+      <li><a href="#unscramble3" id="button-unscramble-3">3</a></li>
+      <li><a href="#unscramble4" id="button-unscramble-4">4</a></li>
+      <li><a href="#unscramble5" id="button-unscramble-5">5</a></li>
+      <li><a href="#unscramble6" id="button-unscramble-6">6</a></li>
+      <li><a href="#unscramble7" id="button-unscramble-7">7</a></li>
+      <li><a href="#unscramble" id="button-unscramble">Unscramble</a></li>
+    </ul>
+
+    <script src="lib/three.min.js"></script>
+    <script src='lib/threex.domevent.js'></script>
+    <script src='lib/threex.domevent.object3d.js'></script>
+    <script src='solver.d/solve_cube.js'></script>
+
+    <script>
+      var ANGLE_STEPCOUNT = 12
+
+      var rotateCommands = []
+      var camera, scene, renderer;
+      var windowWidth, windoHeight
+
+      var blue   = 0x0051BA,
+          white  = 0xFFFFFF,
+          orange = 0xFF5800,
+          yellow = 0xFFD500,
+          green  = 0x009E60,
+          red    = 0xC41E3A,
+          black  = 0x000000
+
+      function randomInt(min, max) {
+        return Math.floor(Math.random() * (max - min + 1) + min);
+      }
+
+      init();
+
+      nearlyEqual = function(a, b, d) {
+        d = d || 0.001;
+        return Math.abs(a - b) <= d;
+      }
+
+      isZero = function(a, d) {
+        d = d || 0.001;
+        return nearlyEqual(a, 0, d);
+      }
+
+      isPositive = function(a, d) {
+        d = d || 0.001;
+        return a > d;
+      }
+
+      isNegative = function(a, d) {
+        d = d || 0.001;
+        return a < -d;
+      }
+
+      function init() {
+        var geometry, material
+        var size = 150;
+        windowWidth = window.innerWidth
+        windowHeight = window.innerHeight
+
+        camera = new THREE.OrthographicCamera(-windowWidth/2,   windowWidth/2,
+                                               windowHeight/2, -windowHeight/2,
+                                              -1000, 1000);
+        THREE.Object3D._threexDomEvent.camera(camera);
+
+        scene = new THREE.Scene();
+        scene.rotation.x = Math.PI / 12
+        scene.rotation.y = Math.PI / 12
+
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(windowWidth, windowHeight);
+
+        document.body.appendChild(renderer.domElement);
+      }
+
+      function getMaterials(x,y,z) {
+        var colours = [yellow, green, blue, red, orange, white]
+        if (x <= 0) { colours[0] = black }
+        if (x >= 0) { colours[1] = black }
+        if (y <= 0) { colours[2] = black }
+        if (y >= 0) { colours[3] = black }
+        if (z <= 0) { colours[4] = black }
+        if (z >= 0) { colours[5] = black }
+
+        var faceMaterials = colours.map(function(c) {
+              return new THREE.MeshBasicMaterial({ color: c });
+            })
+        return faceMaterials
+      }
+
+      var cubeSize = 50,
+          dimensions = 3,
+          spacing, // = cubeSize/30, computed below
+          frac = .5
+
+      var wholeCubeSize = cubeSize * (dimensions + (dimensions-1)/30)
+
+      if (wholeCubeSize > frac * windowWidth) {
+        cubeSize = frac * windowWidth / (dimensions + (dimensions-1)/30)
+        wholeCubeSize = cubeSize * (dimensions + (dimensions-1)/30)
+      }
+      if (wholeCubeSize > frac * windowHeight) {
+        cubeSize = frac * windowHeight / (dimensions + (dimensions-1)/30)
+      }
+      spacing = cubeSize/30
+
+      var gap = cubeSize + spacing
+      var X_LEFT_VECTOR  = new THREE.Vector3(-gap,    0, 0)
+      var X_RIGHT_VECTOR = new THREE.Vector3( gap,    0, 0)
+      var Y_UP_VECTOR    = new THREE.Vector3(   0,  gap, 0)
+      var Y_DOWN_VECTOR  = new THREE.Vector3(   0, -gap, 0)
+
+      var increment = cubeSize + spacing,
+          allCubes = [];
+
+      var redCenterCube,
+          whiteCenterCube,
+          blueCenterCube,
+          yellowCenterCube,
+          greenCenterCube,
+          orangeCenterCube
+
+      var activeGroup, activeGroup2
+
+      function newCubie(x, y, z) {
+        var myMaterials = getMaterials(x,y,z)
+
+        var cube = new THREE.Group()
+
+        cube.homePosition = new THREE.Vector3(x < 0 ? -1 : x > 0 ? 1 : 0,
+                                              y < 0 ? -1 : y > 0 ? 1 : 0,
+                                              z < 0 ? -1 : z > 0 ? 1 : 0)
+        cube.position.x = x
+        cube.position.y = y
+        cube.position.z = z
+
+        for (var i = 0; i < 6; ++i) {
+          var plane = new THREE.PlaneGeometry(cubeSize, cubeSize)
+          var face  = new THREE.Mesh(plane, new THREE.MeshBasicMaterial({color: myMaterials[i].color
+                                }))
+           face.type = 'face'
+
+           switch (i) {
+              case 0: face.rotateY( Math.PI/2); face.position.x =  cubeSize/2; face.color = 'yellow'; break;
+              case 1: face.rotateY(-Math.PI/2); face.position.x = -cubeSize/2; face.color = 'green';  break;
+              case 2: face.rotateX(-Math.PI/2); face.position.y =  cubeSize/2; face.color = 'blue';   break;
+              case 3: face.rotateX( Math.PI/2); face.position.y = -cubeSize/2; face.color = 'red';    break;
+              case 4:                           face.position.z =  cubeSize/2; face.color = 'orange'; break;
+              case 5: face.rotateX( Math.PI);   face.position.z = -cubeSize/2; face.color = 'white';  break;
+           }
+
+          cube.add(face)
+        }
+
+        scene.add(cube);
+        allCubes.push(cube);
+
+        if (isCenterCube(cube)) {
+          if (isPositive(x)) { yellowCenterCube = cube; cube.axis = new THREE.Vector3( 1, 0, 0); }
+          if (isNegative(x)) { greenCenterCube  = cube; cube.axis = new THREE.Vector3(-1, 0, 0); }
+          if (isPositive(y)) { blueCenterCube   = cube; cube.axis = new THREE.Vector3( 0, 1, 0); }
+          if (isNegative(y)) { redCenterCube    = cube; cube.axis = new THREE.Vector3( 0,-1, 0); }
+          if (isPositive(z)) { orangeCenterCube = cube; cube.axis = new THREE.Vector3( 0, 0, 1); }
+          if (isNegative(z)) { whiteCenterCube  = cube; cube.axis = new THREE.Vector3( 0, 0,-1); }
+        }
+      }
+
+      var isCenterCube = function(cube) {
+        var nonzerocount = 0
+        if (!isZero(x)) ++nonzerocount;
+        if (!isZero(y)) ++nonzerocount;
+        if (!isZero(z)) ++nonzerocount;
+
+        return nonzerocount == 1
+      }
+
+      var positionOffset = (dimensions - 1) / 2;
+
+      for (var i = 0; i < dimensions; ++i) {
+        for (var j = 0; j < dimensions; ++j) {
+          for (var k = 0; k < dimensions; ++k) {
+            var x = (i - positionOffset) * increment,
+                y = (j - positionOffset) * increment,
+                z = (k - positionOffset) * increment;
+
+            newCubie(x, y, z)
+          }
+        }
+      }
+
+      var pointerStart = function(pointerX, pointerY) {
+        start_window_x =   pointerX - windowWidth/2
+        start_window_y = -(pointerY - windowHeight/2)
+
+        start_euler_angles = new THREE.Euler().copy(scene.rotation)
+
+        var mousePoint = new THREE.Vector3(start_window_x,start_window_y,1000)
+        var mouseDirection = new THREE.Vector3(0,0,-1)
+
+        var raycaster = new THREE.Raycaster(mousePoint, mouseDirection)
+        var intersects = raycaster.intersectObjects(scene.children, true);
+
+        if (intersects.length >= 1 && intersects[0].object.type == 'face') {
+            interactiveRotating = true
+            rotationFace = intersects[0].object
+
+        } else {
+          mousing = true
+
+          start_euler_angles = new THREE.Euler().copy(scene.rotation)
+        }
+      }
+
+      var pointerMove = function(pointerX, pointerY) {
+        if (mousing) {
+          do_window_3d_rotate(scene, pointerX - windowWidth/2, -(pointerY - windowHeight/2))
+
+        } else if (interactiveRotating) {
+          moveWhileInteractiveRotating(scene, rotationFace, pointerX - windowWidth/2, -(pointerY - windowHeight/2))
+        }
+      }
+
+      var pointerDone = function() {
+        mousing = false
+        interactiveRotating = false
+      }
+
+      var handleTouchStart = function(event) {
+        if (event.touches.length >= 1) {
+          pointerStart(event.touches[0].pageX, event.touches[0].pageY)
+        }
+      }
+
+      var handleTouchMove = function(e) {
+        pointerMove(event.touches[0].pageX, event.touches[0].pageY)
+      }
+
+      var handleTouchEnd = function(e) {
+        pointerDone()
+      }
+
+      var handleMouseDown = function(e) {
+        pointerStart(e.clientX, e.clientY)
+      }
+
+      var handleMouseMove = function(e) {
+        pointerMove(e.clientX, e.clientY)
+      }
+
+      var handleMouseUp = function(e) {
+        pointerDone()
+      }
+
+      var handleScramble = function(e) {
+        scramble();
+      }
+
+      var handleUnscramble = function(e) {
+        unscramble();
+      }
+
+      var handleUnscramble1 = function(e) { unscramble(1); }
+      var handleUnscramble2 = function(e) { unscramble(2); }
+      var handleUnscramble3 = function(e) { unscramble(3); }
+      var handleUnscramble4 = function(e) { unscramble(4); }
+      var handleUnscramble5 = function(e) { unscramble(5); }
+      var handleUnscramble6 = function(e) { unscramble(6); }
+      var handleUnscramble7 = function(e) { unscramble(7); }
+
+      var setActiveGroup = function(centerCube) {
+        var activeGroup = []
+
+        allCubes.forEach(function(cube) {
+          var outerCubePosition = new THREE.Vector3().applyMatrix4(cube.matrix)
+
+          if (   !isZero(centerCube.position.x) && nearlyEqual(centerCube.position.x, outerCubePosition.x)
+              || !isZero(centerCube.position.y) && nearlyEqual(centerCube.position.y, outerCubePosition.y)
+              || !isZero(centerCube.position.z) && nearlyEqual(centerCube.position.z, outerCubePosition.z))
+          {
+            activeGroup.push(cube);
+          }
+        })
+
+        return activeGroup
+      }
+
+      var rotateFace = function(centerCube, angle) {
+        if (!turningFace && !turningCenter) {
+          activeGroup = setActiveGroup(centerCube);
+
+          turningFace = true
+          angleIncrement = angle / ANGLE_STEPCOUNT
+          angleCount     = 0
+          turningFaceCenterCube = centerCube
+        }
+      }
+
+      var rotateCenter = function(centerCube1, angle, centerCube2, angle2, axis) {
+        if (!turningFace && !turningCenter) {
+          rotateFace(centerCube1, angle)
+
+          activeGroup2 = setActiveGroup(centerCube2);
+
+          turningCenter = true
+          angleIncrement2 = angle2 / ANGLE_STEPCOUNT
+          turningFaceCenterCube2 = centerCube2
+          centerFaceAxis = axis
+        }
+      }
+
+      var pushString = function(str) {
+        for (var i = 0; i < str.length; ++i) {
+          rotateCommands.push(str.charAt(i))
+        }
+      }
+
+      var startFaceRotation = function(command) {
+        switch (command) {
+          case 'x' :
+                     // but note:  i and I shouldn't be in lua solve code.
+                     // i -> Br, I -> bR
+                     pushString('WrBbORgwyYbwyYwRGowwoygrWrgoyYRbwgwbGRGrRbYoOryoGRyOowwgBRRwwgyWYYoObbBbGOyBGgGrBBBrRwYgBBBGBoBwwOBG')
+
+                     break
+
+          case 'z' :
+                     pushString('RobYByBobrwbGBrrgbOByRYrWrwGrrgRoROYrywrrWrYryRROrorry I W r w i YRwIG r giW rY i o R O I yRo I Y r y i OrrW i y R Y I wrogOGwgoGOWogOGwgoGOWBObo BOborrBObo BOboRBObo BOborrOYi o rr O Iyrr orOYi o rr O Iyrr or oiG r Wiy r YIw R gIO r r')
+                     break
+
+          case 'a' :
+                     pushString('oooyyyOOOYYYwwwyyyoooYYYOOOWWW')
+                     break
+
+          case 'i' : rotateCenter(redCenterCube,     Math.PI/2,
+                                  blueCenterCube,   -Math.PI/2,
+                                  new THREE.Vector3(0, 1, 0))
+                     break
+
+          case 'j' : rotateCenter(whiteCenterCube,   Math.PI/2,
+                                  orangeCenterCube, -Math.PI/2,
+                                  new THREE.Vector3(0, 0, 1))
+                     break
+
+          case 'k' : rotateCenter(yellowCenterCube,  Math.PI/2,
+                                  greenCenterCube,  -Math.PI/2,
+                                  new THREE.Vector3(-1, 0, 0))
+                     break
+
+          case 'I' : rotateCenter(redCenterCube,    -Math.PI/2,
+                                  blueCenterCube,    Math.PI/2,
+                                  new THREE.Vector3(0, 1, 0))
+                     break
+
+          case 'J' : rotateCenter(whiteCenterCube,  -Math.PI/2,
+                                  orangeCenterCube,  Math.PI/2,
+                                  new THREE.Vector3(0, 0, 1))
+                     break
+
+          case 'K' : rotateCenter(yellowCenterCube, -Math.PI/2,
+                                  greenCenterCube,   Math.PI/2,
+                                  new THREE.Vector3(-1, 0, 0))
+                     break
+
+          case 'r' : rotateFace(redCenterCube,     Math.PI/2);  break
+          case 'w' : rotateFace(whiteCenterCube,   Math.PI/2);  break
+          case 'b' : rotateFace(blueCenterCube,    Math.PI/2);  break
+          case 'y' : rotateFace(yellowCenterCube,  Math.PI/2);  break
+          case 'g' : rotateFace(greenCenterCube,   Math.PI/2);  break
+          case 'o' : rotateFace(orangeCenterCube,  Math.PI/2);  break
+
+          case 'R' : rotateFace(redCenterCube,    -Math.PI/2);  break
+          case 'W' : rotateFace(whiteCenterCube,  -Math.PI/2);  break
+          case 'B' : rotateFace(blueCenterCube,   -Math.PI/2);  break
+          case 'Y' : rotateFace(yellowCenterCube, -Math.PI/2);  break
+          case 'G' : rotateFace(greenCenterCube,  -Math.PI/2);  break
+          case 'O' : rotateFace(orangeCenterCube, -Math.PI/2);  break
+
+          case 's' : scramble();  break
+          case 'u' : unscramble();  break
+          case '1' : unscramble(1); break
+          case '2' : unscramble(2); break
+          case '3' : unscramble(3); break
+          case '4' : unscramble(4); break
+          case '5' : unscramble(5); break
+          case '6' : unscramble(6); break
+          case '7' : unscramble(7); break
+        }
+      }
+
+      var handleKeyDown = function(e) {
+        rotateCommands.push(e.key)
+      }
+
+      var big = cubeSize * 1.4
+      var med = cubeSize * 0.8
+
+      var onBlue  = function(point) { return point.y > big }
+      var onRed = function(point)   { return point.y < -big }
+
+      var onGreen = function(point) { return point.x < -big }
+      var onYelo = function(point)  { return point.x > big }
+
+      var onOrng = function(point)  { return point.z > big }
+      var onWhite = function(point) { return point.z < -big }
+
+      var nearBlue  = function(point) { return (point.y > med && point.y < big) }
+      var nearRed   = function(point) { return (point.y < -med && point.y > -big) }
+
+      var nearGreen = function(point) { return (point.x < -med && point.x > -big) }
+      var nearYelo = function(point)  { return (point.x > med && point.x < big) }
+
+      var nearOrng = function(point)  { return (point.z > med && point.z < big) }
+      var nearWhite = function(point) { return (point.z < -med && point.z > -big) }
+
+      var onVertOrng = function(point) { return onOrng(point) && point.x > -med && point.x < med }
+      var onHorzOrng = function(point) { return onOrng(point) && point.y > -med && point.y < med }
+
+      var onVertBlue = function(point) { return onBlue(point) && point.x > -med && point.x < med }
+      var onHorzBlue = function(point) { return onBlue(point) && point.z > -med && point.z < med }
+
+      var onVertWhite = function(point) { return onWhite(point) && point.x > -med && point.x < med }
+      var onHorzWhite = function(point) { return onWhite(point) && point.y > -med && point.y < med }
+
+      var onVertRed = function(point) { return onRed(point) && point.x > -med && point.x < med }
+      var onHorzRed = function(point) { return onRed(point) && point.z > -med && point.z < med }
+
+      var onVertYelo = function(point) { return onYelo(point) && point.z > -med && point.z < med }
+      var onHorzYelo = function(point) { return onYelo(point) && point.y > -med && point.y < med }
+
+      var onVertGreen = function(point) { return onGreen(point) && point.z > -med && point.z < med }
+      var onHorzGreen = function(point) { return onGreen(point) && point.y > -med && point.y < med }
+
+      var startFaceRotationWithMouse = function(selectedFace, otherPoint) {
+        var rubikPt = findRubikPoint(scene, selectedFace.matrixWorld, new THREE.Vector3(0,0,0))
+        var otherPt = findRubikPoint(scene, selectedFace.matrixWorld, otherPoint)
+        var command = '@'
+
+        if (nearOrng(rubikPt) && nearOrng(otherPt)) {
+          if (onBlue(rubikPt) &&  rubikPt.x > otherPt.x) { command = 'o' }
+          if (onBlue(rubikPt) &&  rubikPt.x < otherPt.x) { command = 'O' }
+
+          if (onGreen(rubikPt) &&  rubikPt.y > otherPt.y) { command = 'o' }
+          if (onGreen(rubikPt) &&  rubikPt.y < otherPt.y) { command = 'O' }
+
+          if (onRed(rubikPt) &&  rubikPt.x > otherPt.x) { command = 'O' }
+          if (onRed(rubikPt) &&  rubikPt.x < otherPt.x) { command = 'o' }
+
+          if (onYelo(rubikPt) &&  rubikPt.y > otherPt.y) { command = 'O' }
+          if (onYelo(rubikPt) &&  rubikPt.y < otherPt.y) { command = 'o' }
+        }
+
+        if (nearBlue(rubikPt) && nearBlue(otherPt)) {
+          if (onOrng(rubikPt) &&  rubikPt.x > otherPt.x) { command = 'B' }
+          if (onOrng(rubikPt) &&  rubikPt.x < otherPt.x) { command = 'b' }
+
+          if (onGreen(rubikPt) &&  rubikPt.z > otherPt.z) { command = 'B' }
+          if (onGreen(rubikPt) &&  rubikPt.z < otherPt.z) { command = 'b' }
+
+          if (onWhite(rubikPt) &&  rubikPt.x > otherPt.x) { command = 'b' }
+          if (onWhite(rubikPt) &&  rubikPt.x < otherPt.x) { command = 'B' }
+
+          if (onYelo(rubikPt) &&  rubikPt.z > otherPt.z) { command = 'b' }
+          if (onYelo(rubikPt) &&  rubikPt.z < otherPt.z) { command = 'B' }
+        }
+
+        if (nearRed(rubikPt) && nearRed(otherPt)) {
+          if (onOrng(rubikPt) &&  rubikPt.x > otherPt.x) { command = 'r' }
+          if (onOrng(rubikPt) &&  rubikPt.x < otherPt.x) { command = 'R' }
+
+          if (onGreen(rubikPt) &&  rubikPt.z > otherPt.z) { command = 'r' }
+          if (onGreen(rubikPt) &&  rubikPt.z < otherPt.z) { command = 'R' }
+
+          if (onWhite(rubikPt) &&  rubikPt.x > otherPt.x) { command = 'R' }
+          if (onWhite(rubikPt) &&  rubikPt.x < otherPt.x) { command = 'r' }
+
+          if (onYelo(rubikPt) &&  rubikPt.z > otherPt.z) { command = 'R' }
+          if (onYelo(rubikPt) &&  rubikPt.z < otherPt.z) { command = 'r' }
+        }
+
+        if (nearGreen(rubikPt) && nearGreen(otherPt)) {
+          if (onOrng(rubikPt) &&  rubikPt.y > otherPt.y) { command = 'G' }
+          if (onOrng(rubikPt) &&  rubikPt.y < otherPt.y) { command = 'g' }
+
+          if (onRed(rubikPt) &&  rubikPt.z > otherPt.z) { command = 'G' }
+          if (onRed(rubikPt) &&  rubikPt.z < otherPt.z) { command = 'g' }
+
+          if (onWhite(rubikPt) &&  rubikPt.y > otherPt.y) { command = 'g' }
+          if (onWhite(rubikPt) &&  rubikPt.y < otherPt.y) { command = 'G' }
+
+          if (onBlue(rubikPt) &&  rubikPt.z > otherPt.z) { command = 'g' }
+          if (onBlue(rubikPt) &&  rubikPt.z < otherPt.z) { command = 'G' }
+        }
+
+        if (nearWhite(rubikPt) && nearWhite(otherPt)) {
+          if (onRed(rubikPt) &&  rubikPt.x > otherPt.x) { command = 'w' }
+          if (onRed(rubikPt) &&  rubikPt.x < otherPt.x) { command = 'W' }
+
+          if (onGreen(rubikPt) &&  rubikPt.y > otherPt.y) { command = 'W' }
+          if (onGreen(rubikPt) &&  rubikPt.y < otherPt.y) { command = 'w' }
+
+          if (onBlue(rubikPt) &&  rubikPt.x > otherPt.x) { command = 'W' }
+          if (onBlue(rubikPt) &&  rubikPt.x < otherPt.x) { command = 'w' }
+
+          if (onYelo(rubikPt) &&  rubikPt.y > otherPt.y) { command = 'w' }
+          if (onYelo(rubikPt) &&  rubikPt.y < otherPt.y) { command = 'W' }
+        }
+
+        if (nearYelo(rubikPt) && nearYelo(otherPt)) {
+          if (onOrng(rubikPt) &&  rubikPt.y > otherPt.y) { command = 'y' }
+          if (onOrng(rubikPt) &&  rubikPt.y < otherPt.y) { command = 'Y' }
+
+          if (onRed(rubikPt) &&  rubikPt.z > otherPt.z) { command = 'y' }
+          if (onRed(rubikPt) &&  rubikPt.z < otherPt.z) { command = 'Y' }
+
+          if (onWhite(rubikPt) &&  rubikPt.y > otherPt.y) { command = 'Y' }
+          if (onWhite(rubikPt) &&  rubikPt.y < otherPt.y) { command = 'y' }
+
+          if (onBlue(rubikPt) &&  rubikPt.z > otherPt.z) { command = 'Y' }
+          if (onBlue(rubikPt) &&  rubikPt.z < otherPt.z) { command = 'y' }
+        }
+
+        if (onVertOrng(rubikPt) && onVertOrng(otherPt)) {
+          if (rubikPt.y > otherPt.y) command = 'K'; else command = 'k'
+        }
+
+        if (onHorzOrng(rubikPt) && onHorzOrng(otherPt)) {
+          if (rubikPt.x > otherPt.x) command = 'I'; else command = 'i'
+        }
+
+        if (onVertGreen(rubikPt) && onVertGreen(otherPt)) {
+          if (rubikPt.y > otherPt.y) command = 'j'; else command = 'J'
+        }
+
+        if (onHorzGreen(rubikPt) && onHorzGreen(otherPt)) {
+          if (rubikPt.z > otherPt.z) command = 'I'; else command = 'i'
+        }
+
+        if (onVertYelo(rubikPt) && onVertYelo(otherPt)) {
+          if (rubikPt.y > otherPt.y) command = 'J'; else command = 'j'
+        }
+
+        if (onHorzYelo(rubikPt) && onHorzYelo(otherPt)) {
+          if (rubikPt.z > otherPt.z) command = 'i'; else command = 'I'
+        }
+
+        if (onVertRed(rubikPt) && onVertRed(otherPt)) {
+          if (rubikPt.z > otherPt.z) command = 'K'; else command = 'k'
+        }
+
+        if (onHorzRed(rubikPt) && onHorzRed(otherPt)) {
+          if (rubikPt.x > otherPt.x) command = 'J'; else command = 'j'
+        }
+
+        if (onVertWhite(rubikPt) && onVertWhite(otherPt)) {
+          if (rubikPt.y > otherPt.y) command = 'k'; else command = 'K'
+        }
+
+        if (onHorzWhite(rubikPt) && onHorzWhite(otherPt)) {
+          if (rubikPt.x > otherPt.x) command = 'i'; else command = 'I'
+        }
+
+        if (onVertBlue(rubikPt) && onVertBlue(otherPt)) {
+          if (rubikPt.z > otherPt.z) command = 'k'; else command = 'K'
+        }
+
+        if (onHorzBlue(rubikPt) && onHorzBlue(otherPt)) {
+          if (rubikPt.x > otherPt.x) command = 'j'; else command = 'J'
+        }
+
+        startFaceRotation(command)
+      }
+
+      document.addEventListener('mousemove', handleMouseMove, false);
+      document.addEventListener('mouseup',   handleMouseUp,   false);
+      document.addEventListener('mousedown', handleMouseDown, false);
+      document.addEventListener('keydown',   handleKeyDown,   false);
+
+      document.addEventListener('touchstart', handleTouchStart, false);
+      document.addEventListener('touchmove',  handleTouchMove, false);
+      document.addEventListener('touchend',   handleTouchEnd,   false);
+
+      var scrambleBtn = document.getElementById('button-scramble')
+      var unscrambleBtn = document.getElementById('button-unscramble')
+
+      var unscrambleBtn1 = document.getElementById('button-unscramble-1')
+      var unscrambleBtn2 = document.getElementById('button-unscramble-2')
+      var unscrambleBtn3 = document.getElementById('button-unscramble-3')
+      var unscrambleBtn4 = document.getElementById('button-unscramble-4')
+      var unscrambleBtn5 = document.getElementById('button-unscramble-5')
+      var unscrambleBtn6 = document.getElementById('button-unscramble-6')
+      var unscrambleBtn7 = document.getElementById('button-unscramble-7')
+
+      scrambleBtn.addEventListener('touchstart', handleScramble, false);
+      scrambleBtn.addEventListener('click', handleScramble, false);
+
+      unscrambleBtn.addEventListener('touchstart', handleUnscramble, false);
+      unscrambleBtn.addEventListener('click', handleUnscramble, false);
+
+      unscrambleBtn1.addEventListener('touchstart', handleUnscramble1, false);
+      unscrambleBtn1.addEventListener('click', handleUnscramble1, false);
+
+      unscrambleBtn2.addEventListener('touchstart', handleUnscramble2, false);
+      unscrambleBtn2.addEventListener('click', handleUnscramble2, false);
+
+      unscrambleBtn3.addEventListener('touchstart', handleUnscramble3, false);
+      unscrambleBtn3.addEventListener('click', handleUnscramble3, false);
+
+      unscrambleBtn4.addEventListener('touchstart', handleUnscramble4, false);
+      unscrambleBtn4.addEventListener('click', handleUnscramble4, false);
+
+      unscrambleBtn5.addEventListener('touchstart', handleUnscramble5, false);
+      unscrambleBtn5.addEventListener('click', handleUnscramble5, false);
+
+      unscrambleBtn6.addEventListener('touchstart', handleUnscramble6, false);
+      unscrambleBtn6.addEventListener('click', handleUnscramble6, false);
+
+      unscrambleBtn7.addEventListener('touchstart', handleUnscramble7, false);
+      unscrambleBtn7.addEventListener('click', handleUnscramble7, false);
+
+      var mousing = false
+      var interactiveRotating = false
+      var start_window_x, start_window_y
+      var rotate_ratio = 200
+      var start_euler_angles
+      var turningFace
+      var turningCenter
+
+      var angleCount
+      var angleIncrement
+      var angleIncrement2
+      var turningFaceCenterCube
+      var turningFaceCenterCube2
+      var centerFaceAxis
+
+      var do_rotate = function(centerCube, cube, angle) {
+        var axisRot = new THREE.Matrix4().makeRotationAxis(centerCube.axis, angle)
+
+        cube.matrix.premultiply(axisRot)
+        cube.matrixAutoUpdate = false
+      }
+
+      var do_window_3d_rotate = function(scene, window_x, window_y) {
+        var thetaX = -(window_y - start_window_y) / rotate_ratio
+        var thetaY =  (window_x - start_window_x) / rotate_ratio
+
+        var xrot   = new THREE.Matrix4().makeRotationX(thetaX)
+        var yrot   = new THREE.Matrix4().makeRotationY(thetaY)
+
+        var mat = new THREE.Matrix4().makeRotationFromEuler(start_euler_angles)
+
+        mat.premultiply(yrot)
+        mat.premultiply(xrot)
+
+        var new_euler = new THREE.Euler().setFromRotationMatrix(mat)
+        scene.rotation.copy(new_euler)
+      }
+
+      // given a point in face-local coordinates, find the point
+      // in rubik's-cube coordinates, i.e., the inner coordinate system
+      // for scene.  Rubik's cube coordinates do not change even though
+      // the user may rotate the cube around and look at it from different
+      // sides.
+      //
+      // This function assumes that scene is the highest
+      // object that is handed to the renderer.
+      //
+      var findRubikPoint = function(scene, faceMatrixWorld, point) {
+        var p = point.clone().applyMatrix4(faceMatrixWorld)
+        var mat = new THREE.Matrix4().getInverse(scene.matrix)
+        return p.applyMatrix4(mat)
+      }
+
+      // in terms of its own local geometry, face is a square on the X-Y plane
+      // whose center is at the origin of the -Y plane.
+      // worldPoint and worldDirection are in the coordinates of the world,
+      // i.e., just inside the camera.
+      //
+      // find the point in face-local geometry that the line defined by
+      // worldPoint and worldDirection intersects the face.  (or at least
+      // the X-Y plane containing the face.)
+      //
+      var findFacePoint = function(face, worldPoint, worldDirection) {
+        var worldPoint2 = worldPoint.clone().add(worldDirection)
+
+        var mat = new THREE.Matrix4().getInverse(face.matrixWorld)
+
+        var facePoint1 = worldPoint.clone().applyMatrix4(mat)
+        var facePoint2 = worldPoint2.clone().applyMatrix4(mat)
+
+        var slope = -facePoint1.z / (facePoint2.z - facePoint1.z)
+
+        return new THREE.Vector3(facePoint1.x + slope * (facePoint2.x - facePoint1.x),
+                                 facePoint1.y + slope * (facePoint2.y - facePoint1.y),
+                                 0)
+      }
+
+      var moveWhileInteractiveRotating = function(scene, selectedFace, window_x, window_y) {
+        var mousePoint = new THREE.Vector3(window_x, window_y, 1000)
+        var mouseDirection = new THREE.Vector3(0,0,-1)
+
+        var LOW  = -cubeSize/2
+        var HIGH =  cubeSize/2
+
+        var facePoint = findFacePoint(selectedFace, mousePoint, mouseDirection)
+
+        if (   facePoint.x < LOW || facePoint.x > HIGH
+            || facePoint.y < LOW || facePoint.y >= HIGH)
+        {
+           interactiveRotating = false
+
+          // to do a move, the mouse has to be directly above, below, left, or right
+          // of the face.  otherwise, don't do a face rotate..
+          //
+          if (  (facePoint.x < LOW || facePoint.x > HIGH)
+             && (facePoint.y < LOW || facePoint.y >= HIGH)) {
+            return;
+          }
+
+          var otherPoint
+               if (facePoint.x < LOW)  otherPoint = X_LEFT_VECTOR
+          else if (facePoint.x > HIGH) otherPoint = X_RIGHT_VECTOR
+          else if (facePoint.y < LOW)  otherPoint = Y_DOWN_VECTOR
+          else if (facePoint.y > HIGH) otherPoint = Y_UP_VECTOR
+
+          startFaceRotationWithMouse(selectedFace, otherPoint)
+        }
+      }
+
+      var randomMove = function(centerCube, angle) {
+        activeGroup = setActiveGroup(centerCube)
+        activeGroup.forEach(function(cube) {
+          do_rotate(centerCube, cube, angle)
+        });
+      }
+
+      var signum = function(n) {
+             if (isZero(n))     n =  0
+        else if (isNegative(n)) n = -1
+        else if (isPositive(n)) n =  1
+        return n
+      }
+
+      var signumVector = function(vec) {
+        vec.x = signum(vec.x)
+        vec.y = signum(vec.y)
+        vec.z = signum(vec.z)
+      }
+
+      var unscramble = function(cmd) {
+        cmd = cmd || 0
+        if (!turningFace && !turningCenter && rotateCommands.length == 0) {
+          var cube = new solver.Cube()
+          for (var i = 0; i < allCubes.length; ++i) {
+            var inCubie = allCubes[i]
+            var home_x = signum(inCubie.position.x)
+            var home_y = signum(inCubie.position.y)
+            var home_z = signum(inCubie.position.z)
+            var posn = new THREE.Vector4(home_x,home_y,home_z,0).applyMatrix4(inCubie.matrix)
+            var x = signum(posn.x)
+            var y = signum(posn.y)
+            var z = signum(posn.z)
+                        
+            var outCubie = new solver.Cubie(home_x, home_y, home_z)
+
+            var X = new THREE.Vector3(), Y = new THREE.Vector3(), Z = new THREE.Vector3()
+            inCubie.matrix.extractBasis(X,Y,Z)
+            signumVector(X)
+            signumVector(Y)
+            signumVector(Z)
+
+            outCubie.update(x, y, z,
+                            X.x, X.y, X.z,
+                            Y.x, Y.y, Y.z)
+
+            cube.updateCubie(outCubie)
+          }
+          var solution
+          switch (cmd) {
+              case 0:  solution = solver.solveCube(cube); break
+              case 1:  solution = cube.fixTopEdges(); break
+              case 2:  solution = cube.fixTopCorners(); break
+              case 3:  solution = cube.fixMiddles(); break
+              case 4:  solution = cube.fixBottomCornerPositions(); break
+              case 5:  solution = cube.fixBottomCornerOrientations(); break
+              case 6:  solution = cube.fixBottomEdgePositions(); break
+              case 7:  solution = cube.fixBottomEdgeOrientations(); break
+          }
+
+          pushString(solution)
+        }
+      }
+
+      var scramble = function() {
+        if (!turningFace && !turningCenter && rotateCommands.length == 0) {
+          var result = ''
+          for (var i = 0; i < 100; ++i) {
+            var center = randomInt(0, 5)
+            var dir    = randomInt(0, 1)
+            var c
+            switch (center) {
+              case 0:  center = redCenterCube;    c = 'r'; break
+              case 1:  center = greenCenterCube;  c = 'g'; break
+              case 2:  center = yellowCenterCube; c = 'y'; break
+              case 3:  center = blueCenterCube;   c = 'b'; break
+              case 4:  center = whiteCenterCube;  c = 'w'; break
+              case 5:  center = orangeCenterCube; c = 'o'; break
+            }
+            var angle = Math.PI/2
+            if (dir) {
+              angle = -angle
+              c = otherColor(c)
+            }
+            randomMove(center, angle)
+            result += c
+          }
+          console.log(result)
+        }
+      }
+
+      function animate() {
+        if (!turningFace && !turningCenter) {
+          cmd = rotateCommands.shift()
+
+          if (cmd != undefined) {
+            startFaceRotation(cmd)
+          }
+        }
+
+        if (turningFace) {
+          if (++angleCount == ANGLE_STEPCOUNT) {
+            turningFace = false
+          }
+          activeGroup.forEach(function(cube) {
+            do_rotate(turningFaceCenterCube, cube, angleIncrement)
+          });
+        }
+        if (turningCenter) {
+          if (angleCount == ANGLE_STEPCOUNT) {
+            turningCenter = false
+          }
+          activeGroup2.forEach(function(cube) {
+            do_rotate(turningFaceCenterCube2, cube, angleIncrement2)
+          });
+          scene.rotateOnAxis(centerFaceAxis, angleIncrement)
+        }
+
+        requestAnimationFrame(animate);
+        renderer.render(scene, camera);
+      }
+
+      animate();
+
+    </script>
+  </body>
+</html>
