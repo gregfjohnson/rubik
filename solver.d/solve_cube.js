@@ -20,11 +20,22 @@
     // rotate red face, then green face, then blue face..
     cube.rotate('rgb')
 
-    var solution = solver.solveCube(cube)
+  After creating a cube and scrambling it, the cube can be solved
+  in a sequence of seven steps.  Each step modifies the cube, and
+  returns a string containing the commands that perform the step.
 
-  The cube is updated to a solved state, and the string
-  that contains the rotation commands used to solve the
-  cube is returned.
+    var step1 = cube.fixTopEdges()
+    var step2 = cube.fixTopCorners()
+    var step3 = cube.fixMiddles()
+    var step4 = cube.fixBottomCornerPositions()
+    var step5 = cube.fixBottomCornerOrientations()
+    var step6 = cube.fixBottomEdgePositions()
+    var step7 = cube.fixBottomEdgeOrientations()
+
+  If desired, the above steps can be combined into a single
+  function call:
+
+    var solution = solver.solveCube(cube)
 
   The cube is assumed to have the following faces:
 
