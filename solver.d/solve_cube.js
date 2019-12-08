@@ -35,7 +35,7 @@
   If desired, the above steps can be combined into a single
   function call:
 
-    var solution = solver.solveCube(cube)
+    var solution = cube.solve()
 
   The cube is assumed to have the following faces:
 
@@ -231,6 +231,8 @@ function findHomeCubie(cube,x,y,z) {
     }
 }
 
+// Vector object constructor; call as 'new Vector(1,2,3)'
+//
 function Vector(x,y,z) {
     var result
     if (typeof x != 'number') {
@@ -258,6 +260,7 @@ function Vector(x,y,z) {
 
     return result
 }
+
 
 var X = new Vector(1, 0, 0)
 var Y = new Vector(0, 1, 0)
@@ -304,6 +307,8 @@ function addRotMatrixAndColor(cubie) {
     if (cubie.posn.z ==  1) { cubie.rotmat = frontCCW; cubie.color = 'o' }
 }
 
+// Cubie object constructor; call as new Cubie(-1, 0, 1)
+//
 var Cubie = function(x,y,z) {
     if (   (typeof x != 'number' || x != -1 && x != 0 && x != 1)
         || (typeof y != 'number' || y != -1 && y != 0 && y != 1)
@@ -1043,6 +1048,8 @@ var solveCube = function(cube) {
     return cleanup(result)
 }
 
+// Cube object constructor; call as new Cube()
+//
 var Cube = function() {
     var index = 0
     for (var x = -1; x <= 1; ++x) {

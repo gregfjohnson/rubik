@@ -37,14 +37,12 @@
   <body>
     <ul id="controls">
       <li><a href="#scramble" id="button-scramble">Scramble</a></li>
-      <li><a href="#unscramble1" id="button-unscramble-1">1</a></li>
-      <li><a href="#unscramble2" id="button-unscramble-2">2</a></li>
-      <li><a href="#unscramble3" id="button-unscramble-3">3</a></li>
-      <li><a href="#unscramble4" id="button-unscramble-4">4</a></li>
-      <li><a href="#unscramble5" id="button-unscramble-5">5</a></li>
-      <li><a href="#unscramble6" id="button-unscramble-6">6</a></li>
-      <li><a href="#unscramble7" id="button-unscramble-7">7</a></li>
-      <li><a href="#unscramble" id="button-unscramble">Unscramble</a></li>
+      <br>
+      <li><a href="#solve" id="button-solve">Solve</a></li>
+      <br>
+      <li><a href="#record" id="button-record">Record</a></li>
+      <br>
+      <li><a href="#rewind" id="button-rewind">Rewind</a></li>
     </ul>
 
     <script src="lib/three.min.js"></script>
@@ -53,11 +51,29 @@
     <script src='solver.d/solve_cube.js'></script>
 
     <script>
+      function otherColor(c) {
+          if (c >= 'A' && c <= 'Z') return c.toLowerCase();
+          else return c.toUpperCase();
+      }
+
+      var reverse = function(cmds) {
+          var result = ''
+          for (var i = cmds.length - 1; i >= 0; --i) {
+              result += otherColor(cmds.charAt(i))
+          }
+          return result
+      }
+
+
       var ANGLE_STEPCOUNT = 12
+      var SCRAMBLE_COUNT  = 100
 
       var rotateCommands = []
+      var movesAfterStartRecording = ''
+      var recordPending = false
+      var scene0
       var camera, scene, renderer;
-      var windowWidth, windoHeight
+      var windowWidth, windowHeight
 
       var blue   = 0x0051BA,
           white  = 0xFFFFFF,
@@ -93,20 +109,27 @@
         return a < -d;
       }
 
+      var size = 50
+
       function init() {
         var geometry, material
-        var size = 150;
         windowWidth = window.innerWidth
         windowHeight = window.innerHeight
 
-        camera = new THREE.OrthographicCamera(-windowWidth/2,   windowWidth/2,
-                                               windowHeight/2, -windowHeight/2,
-                                              -1000, 1000);
+        // this angle makes y about one half of x..
+        camera = new THREE.PerspectiveCamera(53.13, windowWidth/windowHeight,
+                                             10, 2000);
+        camera.position.z = 750
+
         THREE.Object3D._threexDomEvent.camera(camera);
+
+        scene0 = new THREE.Scene();
 
         scene = new THREE.Scene();
         scene.rotation.x = Math.PI / 12
         scene.rotation.y = Math.PI / 12
+
+        scene0.add(scene)
 
         renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setPixelRatio(window.devicePixelRatio);
@@ -125,25 +148,28 @@
         if (z >= 0) { colours[5] = black }
 
         var faceMaterials = colours.map(function(c) {
-              return new THREE.MeshBasicMaterial({ color: c });
+              return new THREE.MeshBasicMaterial({ color: c,
+                                                   side: THREE.DoubleSide });
             })
+
         return faceMaterials
       }
 
-      var cubeSize = 50,
+      var cubeSize = size,
           dimensions = 3,
           spacing, // = cubeSize/30, computed below
           frac = .5
 
       var wholeCubeSize = cubeSize * (dimensions + (dimensions-1)/30)
 
-      if (wholeCubeSize > frac * windowWidth) {
-        cubeSize = frac * windowWidth / (dimensions + (dimensions-1)/30)
+      var smallerDimension = (windowWidth < windowHeight) ? windowWidth 
+                                                          : windowHeight;
+
+      if (wholeCubeSize > frac * smallerDimension) {
+        cubeSize = frac * smallerDimension / (dimensions + (dimensions-1)/30)
         wholeCubeSize = cubeSize * (dimensions + (dimensions-1)/30)
       }
-      if (wholeCubeSize > frac * windowHeight) {
-        cubeSize = frac * windowHeight / (dimensions + (dimensions-1)/30)
-      }
+ 
       spacing = cubeSize/30
 
       var gap = cubeSize + spacing
@@ -153,7 +179,7 @@
       var Y_DOWN_VECTOR  = new THREE.Vector3(   0, -gap, 0)
 
       var increment = cubeSize + spacing,
-          allCubes = [];
+          allCubies = [];
 
       var redCenterCube,
           whiteCenterCube,
@@ -164,23 +190,28 @@
 
       var activeGroup, activeGroup2
 
+      function int(n) {
+        return Math.round(n)
+      }
+
       function newCubie(x, y, z) {
         var myMaterials = getMaterials(x,y,z)
 
-        var cube = new THREE.Group()
+        var cubie = new THREE.Group()
 
-        cube.homePosition = new THREE.Vector3(x < 0 ? -1 : x > 0 ? 1 : 0,
-                                              y < 0 ? -1 : y > 0 ? 1 : 0,
-                                              z < 0 ? -1 : z > 0 ? 1 : 0)
-        cube.position.x = x
-        cube.position.y = y
-        cube.position.z = z
+        //cubie.homePosition = new THREE.Vector3(x < 0 ? -1 : x > 0 ? 1 : 0,
+                                               //y < 0 ? -1 : y > 0 ? 1 : 0,
+                                               //z < 0 ? -1 : z > 0 ? 1 : 0)
+        cubie.position.x = x
+        cubie.position.y = y
+        cubie.position.z = z
 
         for (var i = 0; i < 6; ++i) {
           var plane = new THREE.PlaneGeometry(cubeSize, cubeSize)
-          var face  = new THREE.Mesh(plane, new THREE.MeshBasicMaterial({color: myMaterials[i].color
-                                }))
+          var face  = new THREE.Mesh(plane, new THREE.MeshBasicMaterial({color: myMaterials[i].color,
+                                                                         side: THREE.DoubleSide}))
            face.type = 'face'
+           face.name = '' + int(x) + '_' + int(y) + '_' + int(z) + '_' + i
 
            switch (i) {
               case 0: face.rotateY( Math.PI/2); face.position.x =  cubeSize/2; face.color = 'yellow'; break;
@@ -191,27 +222,17 @@
               case 5: face.rotateX( Math.PI);   face.position.z = -cubeSize/2; face.color = 'white';  break;
            }
 
-          cube.add(face)
+          cubie.add(face)
         }
 
-        scene.add(cube);
-        allCubes.push(cube);
-
-        if (isCenterCube(cube)) {
-          if (isPositive(x)) { yellowCenterCube = cube; cube.axis = new THREE.Vector3( 1, 0, 0); }
-          if (isNegative(x)) { greenCenterCube  = cube; cube.axis = new THREE.Vector3(-1, 0, 0); }
-          if (isPositive(y)) { blueCenterCube   = cube; cube.axis = new THREE.Vector3( 0, 1, 0); }
-          if (isNegative(y)) { redCenterCube    = cube; cube.axis = new THREE.Vector3( 0,-1, 0); }
-          if (isPositive(z)) { orangeCenterCube = cube; cube.axis = new THREE.Vector3( 0, 0, 1); }
-          if (isNegative(z)) { whiteCenterCube  = cube; cube.axis = new THREE.Vector3( 0, 0,-1); }
-        }
+        return cubie;
       }
 
-      var isCenterCube = function(cube) {
+      var isCenterCube = function(cubie) {
         var nonzerocount = 0
-        if (!isZero(x)) ++nonzerocount;
-        if (!isZero(y)) ++nonzerocount;
-        if (!isZero(z)) ++nonzerocount;
+        if (!isZero(cubie.position.x)) ++nonzerocount;
+        if (!isZero(cubie.position.y)) ++nonzerocount;
+        if (!isZero(cubie.position.z)) ++nonzerocount;
 
         return nonzerocount == 1
       }
@@ -225,7 +246,18 @@
                 y = (j - positionOffset) * increment,
                 z = (k - positionOffset) * increment;
 
-            newCubie(x, y, z)
+            var cubie = newCubie(x, y, z)
+            scene.add(cubie);
+            allCubies.push(cubie);
+
+            if (isCenterCube(cubie)) {
+              if (isPositive(x)) { yellowCenterCube = cubie; cubie.axis = new THREE.Vector3( 1, 0, 0); }
+              if (isNegative(x)) { greenCenterCube  = cubie; cubie.axis = new THREE.Vector3(-1, 0, 0); }
+              if (isPositive(y)) { blueCenterCube   = cubie; cubie.axis = new THREE.Vector3( 0, 1, 0); }
+              if (isNegative(y)) { redCenterCube    = cubie; cubie.axis = new THREE.Vector3( 0,-1, 0); }
+              if (isPositive(z)) { orangeCenterCube = cubie; cubie.axis = new THREE.Vector3( 0, 0, 1); }
+              if (isNegative(z)) { whiteCenterCube  = cubie; cubie.axis = new THREE.Vector3( 0, 0,-1); }
+            }
           }
         }
       }
@@ -236,15 +268,18 @@
 
         start_euler_angles = new THREE.Euler().copy(scene.rotation)
 
-        var mousePoint = new THREE.Vector3(start_window_x,start_window_y,1000)
-        var mouseDirection = new THREE.Vector3(0,0,-1)
+        var ndc_x =  ( pointerX / window.innerWidth )  * 2 - 1;
+        var ndc_y = -( pointerY / window.innerHeight ) * 2 + 1;
 
-        var raycaster = new THREE.Raycaster(mousePoint, mouseDirection)
-        var intersects = raycaster.intersectObjects(scene.children, true);
+        var raycaster = new THREE.Raycaster()
+        raycaster.setFromCamera(new THREE.Vector2(ndc_x, ndc_y), camera);
+
+        var intersects = raycaster.intersectObjects(scene0.children, true);
 
         if (intersects.length >= 1 && intersects[0].object.type == 'face') {
             interactiveRotating = true
             rotationFace = intersects[0].object
+            pointerMove(pointerX, pointerY)
 
         } else {
           mousing = true
@@ -258,7 +293,7 @@
           do_window_3d_rotate(scene, pointerX - windowWidth/2, -(pointerY - windowHeight/2))
 
         } else if (interactiveRotating) {
-          moveWhileInteractiveRotating(scene, rotationFace, pointerX - windowWidth/2, -(pointerY - windowHeight/2))
+          moveWhileInteractiveRotating(scene, rotationFace, pointerX, pointerY)
         }
       }
 
@@ -297,37 +332,45 @@
         scramble();
       }
 
-      var handleUnscramble = function(e) {
-        unscramble();
+      var handleSolve = function(e) {
+        solve(allCubies);
       }
 
-      var handleUnscramble1 = function(e) { unscramble(1); }
-      var handleUnscramble2 = function(e) { unscramble(2); }
-      var handleUnscramble3 = function(e) { unscramble(3); }
-      var handleUnscramble4 = function(e) { unscramble(4); }
-      var handleUnscramble5 = function(e) { unscramble(5); }
-      var handleUnscramble6 = function(e) { unscramble(6); }
-      var handleUnscramble7 = function(e) { unscramble(7); }
+      var handleRecord = function(e) {
+        record();
+      }
+
+      var handleRewind = function(e) {
+        rewind();
+      }
+
+      var handleWindowResize = function() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }
 
       var setActiveGroup = function(centerCube) {
         var activeGroup = []
 
-        allCubes.forEach(function(cube) {
-          var outerCubePosition = new THREE.Vector3().applyMatrix4(cube.matrix)
+        allCubies.forEach(function(cubie) {
+          var outerCubePosition = new THREE.Vector3().applyMatrix4(cubie.matrix)
 
           if (   !isZero(centerCube.position.x) && nearlyEqual(centerCube.position.x, outerCubePosition.x)
               || !isZero(centerCube.position.y) && nearlyEqual(centerCube.position.y, outerCubePosition.y)
               || !isZero(centerCube.position.z) && nearlyEqual(centerCube.position.z, outerCubePosition.z))
           {
-            activeGroup.push(cube);
+            activeGroup.push(cubie);
           }
         })
 
         return activeGroup
       }
 
-      var rotateFace = function(centerCube, angle) {
+      var rotateFace = function(centerCube, angle, command) {
         if (!turningFace && !turningCenter) {
+          if (recordPending) { movesAfterStartRecording += command }
+
           activeGroup = setActiveGroup(centerCube);
 
           turningFace = true
@@ -337,9 +380,10 @@
         }
       }
 
-      var rotateCenter = function(centerCube1, angle, centerCube2, angle2, axis) {
+      var rotateCenter = function(centerCube1, angle, centerCube2, angle2, axis, command) {
+
         if (!turningFace && !turningCenter) {
-          rotateFace(centerCube1, angle)
+          rotateFace(centerCube1, angle, command)
 
           activeGroup2 = setActiveGroup(centerCube2);
 
@@ -358,74 +402,62 @@
 
       var startFaceRotation = function(command) {
         switch (command) {
-          case 'x' :
-                     // but note:  i and I shouldn't be in lua solve code.
-                     // i -> Br, I -> bR
-                     pushString('WrBbORgwyYbwyYwRGowwoygrWrgoyYRbwgwbGRGrRbYoOryoGRyOowwgBRRwwgyWYYoObbBbGOyBGgGrBBBrRwYgBBBGBoBwwOBG')
-
-                     break
-
-          case 'z' :
-                     pushString('RobYByBobrwbGBrrgbOByRYrWrwGrrgRoROYrywrrWrYryRROrorry I W r w i YRwIG r giW rY i o R O I yRo I Y r y i OrrW i y R Y I wrogOGwgoGOWogOGwgoGOWBObo BOborrBObo BOboRBObo BOborrOYi o rr O Iyrr orOYi o rr O Iyrr or oiG r Wiy r YIw R gIO r r')
-                     break
-
-          case 'a' :
-                     pushString('oooyyyOOOYYYwwwyyyoooYYYOOOWWW')
-                     break
-
           case 'i' : rotateCenter(redCenterCube,     Math.PI/2,
                                   blueCenterCube,   -Math.PI/2,
-                                  new THREE.Vector3(0, 1, 0))
+                                  new THREE.Vector3(0, 1, 0),
+                                  command)
                      break
 
           case 'j' : rotateCenter(whiteCenterCube,   Math.PI/2,
                                   orangeCenterCube, -Math.PI/2,
-                                  new THREE.Vector3(0, 0, 1))
+                                  new THREE.Vector3(0, 0, 1),
+                                  command)
                      break
 
           case 'k' : rotateCenter(yellowCenterCube,  Math.PI/2,
                                   greenCenterCube,  -Math.PI/2,
-                                  new THREE.Vector3(-1, 0, 0))
+                                  new THREE.Vector3(-1, 0, 0),
+                                  command)
                      break
 
           case 'I' : rotateCenter(redCenterCube,    -Math.PI/2,
                                   blueCenterCube,    Math.PI/2,
-                                  new THREE.Vector3(0, 1, 0))
+                                  new THREE.Vector3(0, 1, 0),
+                                  command)
                      break
 
           case 'J' : rotateCenter(whiteCenterCube,  -Math.PI/2,
                                   orangeCenterCube,  Math.PI/2,
-                                  new THREE.Vector3(0, 0, 1))
+                                  new THREE.Vector3(0, 0, 1),
+                                  command)
                      break
 
           case 'K' : rotateCenter(yellowCenterCube, -Math.PI/2,
                                   greenCenterCube,   Math.PI/2,
-                                  new THREE.Vector3(-1, 0, 0))
+                                  new THREE.Vector3(-1, 0, 0),
+                                  command)
                      break
 
-          case 'r' : rotateFace(redCenterCube,     Math.PI/2);  break
-          case 'w' : rotateFace(whiteCenterCube,   Math.PI/2);  break
-          case 'b' : rotateFace(blueCenterCube,    Math.PI/2);  break
-          case 'y' : rotateFace(yellowCenterCube,  Math.PI/2);  break
-          case 'g' : rotateFace(greenCenterCube,   Math.PI/2);  break
-          case 'o' : rotateFace(orangeCenterCube,  Math.PI/2);  break
+          case 'r' : rotateFace(redCenterCube,     Math.PI/2, command);  break
+          case 'w' : rotateFace(whiteCenterCube,   Math.PI/2, command);  break
+          case 'b' : rotateFace(blueCenterCube,    Math.PI/2, command);  break
+          case 'y' : rotateFace(yellowCenterCube,  Math.PI/2, command);  break
+          case 'g' : rotateFace(greenCenterCube,   Math.PI/2, command);  break
+          case 'o' : rotateFace(orangeCenterCube,  Math.PI/2, command);  break
 
-          case 'R' : rotateFace(redCenterCube,    -Math.PI/2);  break
-          case 'W' : rotateFace(whiteCenterCube,  -Math.PI/2);  break
-          case 'B' : rotateFace(blueCenterCube,   -Math.PI/2);  break
-          case 'Y' : rotateFace(yellowCenterCube, -Math.PI/2);  break
-          case 'G' : rotateFace(greenCenterCube,  -Math.PI/2);  break
-          case 'O' : rotateFace(orangeCenterCube, -Math.PI/2);  break
+          case 'R' : rotateFace(redCenterCube,    -Math.PI/2, command);  break
+          case 'W' : rotateFace(whiteCenterCube,  -Math.PI/2, command);  break
+          case 'B' : rotateFace(blueCenterCube,   -Math.PI/2, command);  break
+          case 'Y' : rotateFace(yellowCenterCube, -Math.PI/2, command);  break
+          case 'G' : rotateFace(greenCenterCube,  -Math.PI/2, command);  break
+          case 'O' : rotateFace(orangeCenterCube, -Math.PI/2, command);  break
+        }
 
+        switch (command) {
           case 's' : scramble();  break
-          case 'u' : unscramble();  break
-          case '1' : unscramble(1); break
-          case '2' : unscramble(2); break
-          case '3' : unscramble(3); break
-          case '4' : unscramble(4); break
-          case '5' : unscramble(5); break
-          case '6' : unscramble(6); break
-          case '7' : unscramble(7); break
+          case 'u' : solve(allCubies);  break
+
+          case 'Z' : rewindComplete()
         }
       }
 
@@ -621,46 +653,29 @@
       document.addEventListener('touchmove',  handleTouchMove, false);
       document.addEventListener('touchend',   handleTouchEnd,   false);
 
-      var scrambleBtn = document.getElementById('button-scramble')
-      var unscrambleBtn = document.getElementById('button-unscramble')
+      window.addEventListener('resize', handleWindowResize, false)
 
-      var unscrambleBtn1 = document.getElementById('button-unscramble-1')
-      var unscrambleBtn2 = document.getElementById('button-unscramble-2')
-      var unscrambleBtn3 = document.getElementById('button-unscramble-3')
-      var unscrambleBtn4 = document.getElementById('button-unscramble-4')
-      var unscrambleBtn5 = document.getElementById('button-unscramble-5')
-      var unscrambleBtn6 = document.getElementById('button-unscramble-6')
-      var unscrambleBtn7 = document.getElementById('button-unscramble-7')
+      var scrambleBtn = document.getElementById('button-scramble')
+      var solveBtn = document.getElementById('button-solve')
+
+      var recordBtn = document.getElementById('button-record')
+      var rewindBtn = document.getElementById('button-rewind')
 
       scrambleBtn.addEventListener('touchstart', handleScramble, false);
       scrambleBtn.addEventListener('click', handleScramble, false);
 
-      unscrambleBtn.addEventListener('touchstart', handleUnscramble, false);
-      unscrambleBtn.addEventListener('click', handleUnscramble, false);
+      solveBtn.addEventListener('touchstart', handleSolve, false);
+      solveBtn.addEventListener('click', handleSolve, false);
 
-      unscrambleBtn1.addEventListener('touchstart', handleUnscramble1, false);
-      unscrambleBtn1.addEventListener('click', handleUnscramble1, false);
+      recordBtn.addEventListener('touchstart', handleRecord, false);
+      recordBtn.addEventListener('click', handleRecord, false);
 
-      unscrambleBtn2.addEventListener('touchstart', handleUnscramble2, false);
-      unscrambleBtn2.addEventListener('click', handleUnscramble2, false);
-
-      unscrambleBtn3.addEventListener('touchstart', handleUnscramble3, false);
-      unscrambleBtn3.addEventListener('click', handleUnscramble3, false);
-
-      unscrambleBtn4.addEventListener('touchstart', handleUnscramble4, false);
-      unscrambleBtn4.addEventListener('click', handleUnscramble4, false);
-
-      unscrambleBtn5.addEventListener('touchstart', handleUnscramble5, false);
-      unscrambleBtn5.addEventListener('click', handleUnscramble5, false);
-
-      unscrambleBtn6.addEventListener('touchstart', handleUnscramble6, false);
-      unscrambleBtn6.addEventListener('click', handleUnscramble6, false);
-
-      unscrambleBtn7.addEventListener('touchstart', handleUnscramble7, false);
-      unscrambleBtn7.addEventListener('click', handleUnscramble7, false);
+      rewindBtn.addEventListener('touchstart', handleRewind, false);
+      rewindBtn.addEventListener('click', handleRewind, false);
 
       var mousing = false
       var interactiveRotating = false
+
       var start_window_x, start_window_y
       var rotate_ratio = 200
       var start_euler_angles
@@ -674,11 +689,12 @@
       var turningFaceCenterCube2
       var centerFaceAxis
 
-      var do_rotate = function(centerCube, cube, angle) {
-        var axisRot = new THREE.Matrix4().makeRotationAxis(centerCube.axis, angle)
+      var do_rotate = function(centerCube, cubie, angle) {
+        var axisRot = new THREE.Matrix4().makeRotationAxis(centerCube.axis,
+                                                           angle)
 
-        cube.matrix.premultiply(axisRot)
-        cube.matrixAutoUpdate = false
+        cubie.matrix.premultiply(axisRot)
+        cubie.matrixAutoUpdate = false
       }
 
       var do_window_3d_rotate = function(scene, window_x, window_y) {
@@ -712,6 +728,15 @@
         return p.applyMatrix4(mat)
       }
 
+      var facePoint = function(facePoint1, facePoint2) {
+          var slope = -facePoint1.z / (facePoint2.z - facePoint1.z)
+
+          return new THREE.Vector3(
+                   facePoint1.x + slope * (facePoint2.x - facePoint1.x),
+                   facePoint1.y + slope * (facePoint2.y - facePoint1.y),
+                                   0)
+      }
+
       // in terms of its own local geometry, face is a square on the X-Y plane
       // whose center is at the origin of the -Y plane.
       // worldPoint and worldDirection are in the coordinates of the world,
@@ -721,37 +746,49 @@
       // worldPoint and worldDirection intersects the face.  (or at least
       // the X-Y plane containing the face.)
       //
-      var findFacePoint = function(face, worldPoint, worldDirection) {
-        var worldPoint2 = worldPoint.clone().add(worldDirection)
-
+      var findFacePoint = function(face, worldPoint1, worldPoint2) {
         var mat = new THREE.Matrix4().getInverse(face.matrixWorld)
 
-        var facePoint1 = worldPoint.clone().applyMatrix4(mat)
+        var facePoint1 = worldPoint1.clone().applyMatrix4(mat)
         var facePoint2 = worldPoint2.clone().applyMatrix4(mat)
 
-        var slope = -facePoint1.z / (facePoint2.z - facePoint1.z)
-
-        return new THREE.Vector3(facePoint1.x + slope * (facePoint2.x - facePoint1.x),
-                                 facePoint1.y + slope * (facePoint2.y - facePoint1.y),
-                                 0)
+        return facePoint(facePoint1, facePoint2)
       }
 
-      var moveWhileInteractiveRotating = function(scene, selectedFace, window_x, window_y) {
-        var mousePoint = new THREE.Vector3(window_x, window_y, 1000)
-        var mouseDirection = new THREE.Vector3(0,0,-1)
+      var moveWhileInteractiveRotating = function(scene, selectedFace,
+                                                  pointerX, pointerY)
+      {
+        var ndc_x =  ( pointerX / window.innerWidth )  * 2 - 1;
+        var ndc_y = -( pointerY / window.innerHeight ) * 2 + 1;
+
+        var mat = new THREE.Matrix4().copy(camera.projectionMatrix)
+        var mati = new THREE.Matrix4().getInverse(mat)
+
+        var ndcNear = new THREE.Vector4(ndc_x, ndc_y, -1., 1.)
+        ndcNear.applyMatrix4(mati)
+        ndcNear.divideScalar(ndcNear.w)
+        ndcNear.applyMatrix4(camera.matrixWorld)
+
+        var ndcFar = new THREE.Vector4(ndc_x, ndc_y, 1., 1.)
+        ndcFar.applyMatrix4(mati)
+        ndcFar.divideScalar(ndcFar.w)
+        ndcFar.applyMatrix4(camera.matrixWorld)
+
+        var mousePoint1 = new THREE.Vector3(ndcNear.x, ndcNear.y, ndcNear.z)
+        var mousePoint2 = new THREE.Vector3(ndcFar.x,  ndcFar.y,  ndcFar.z)
 
         var LOW  = -cubeSize/2
         var HIGH =  cubeSize/2
 
-        var facePoint = findFacePoint(selectedFace, mousePoint, mouseDirection)
+        var facePoint = findFacePoint(selectedFace, mousePoint1, mousePoint2)
 
         if (   facePoint.x < LOW || facePoint.x > HIGH
             || facePoint.y < LOW || facePoint.y >= HIGH)
         {
            interactiveRotating = false
 
-          // to do a move, the mouse has to be directly above, below, left, or right
-          // of the face.  otherwise, don't do a face rotate..
+          // to do a move, the mouse has to be directly above, below,
+          // left, or right of the face.  otherwise, don't do a face rotate..
           //
           if (  (facePoint.x < LOW || facePoint.x > HIGH)
              && (facePoint.y < LOW || facePoint.y >= HIGH)) {
@@ -788,54 +825,70 @@
         vec.z = signum(vec.z)
       }
 
-      var unscramble = function(cmd) {
-        cmd = cmd || 0
-        if (!turningFace && !turningCenter && rotateCommands.length == 0) {
-          var cube = new solver.Cube()
-          for (var i = 0; i < allCubes.length; ++i) {
-            var inCubie = allCubes[i]
-            var home_x = signum(inCubie.position.x)
-            var home_y = signum(inCubie.position.y)
-            var home_z = signum(inCubie.position.z)
-            var posn = new THREE.Vector4(home_x,home_y,home_z,0).applyMatrix4(inCubie.matrix)
-            var x = signum(posn.x)
-            var y = signum(posn.y)
-            var z = signum(posn.z)
-                        
-            var outCubie = new solver.Cubie(home_x, home_y, home_z)
+      var createUnsolvedCube = function(allCubies) {
+        var cube = new solver.Cube()
 
-            var X = new THREE.Vector3(), Y = new THREE.Vector3(), Z = new THREE.Vector3()
-            inCubie.matrix.extractBasis(X,Y,Z)
-            signumVector(X)
-            signumVector(Y)
-            signumVector(Z)
+        for (var i = 0; i < allCubies.length; ++i) {
+          var inCubie = allCubies[i]
+          var home_x = signum(inCubie.position.x)
+          var home_y = signum(inCubie.position.y)
+          var home_z = signum(inCubie.position.z)
+          var posn = new THREE.Vector4(home_x,home_y,home_z,0)
+                          .applyMatrix4(inCubie.matrix)
+          var x = signum(posn.x)
+          var y = signum(posn.y)
+          var z = signum(posn.z)
+                      
+          var outCubie = new solver.Cubie(home_x, home_y, home_z)
 
-            outCubie.update(x, y, z,
-                            X.x, X.y, X.z,
-                            Y.x, Y.y, Y.z)
+          var X = new THREE.Vector3(),
+              Y = new THREE.Vector3(),
+              Z = new THREE.Vector3()
 
-            cube.updateCubie(outCubie)
-          }
-          var solution
-          switch (cmd) {
-              case 0:  solution = solver.solveCube(cube); break
-              case 1:  solution = cube.fixTopEdges(); break
-              case 2:  solution = cube.fixTopCorners(); break
-              case 3:  solution = cube.fixMiddles(); break
-              case 4:  solution = cube.fixBottomCornerPositions(); break
-              case 5:  solution = cube.fixBottomCornerOrientations(); break
-              case 6:  solution = cube.fixBottomEdgePositions(); break
-              case 7:  solution = cube.fixBottomEdgeOrientations(); break
-          }
+          inCubie.matrix.extractBasis(X,Y,Z)
+          signumVector(X)
+          signumVector(Y)
+          signumVector(Z)
 
-          pushString(solution)
+          outCubie.update(x, y, z,
+                          X.x, X.y, X.z,
+                          Y.x, Y.y, Y.z)
+
+          cube.updateCubie(outCubie)
+        }
+
+        return cube;
+      }
+
+      var computeSolveSequence = function(allCubies) {
+        var solution = []
+
+        var cube = createUnsolvedCube(allCubies)
+
+        solution.push(cube.fixTopEdges().replace(/ /g, ''))
+        solution.push(cube.fixTopCorners().replace(/ /g, ''))
+        solution.push(cube.fixMiddles().replace(/ /g, ''))
+        solution.push(cube.fixBottomCornerPositions().replace(/ /g, ''))
+        solution.push(cube.fixBottomCornerOrientations().replace(/ /g, ''))
+        solution.push(cube.fixBottomEdgePositions().replace(/ /g, ''))
+        solution.push(cube.fixBottomEdgeOrientations().replace(/ /g, ''))
+
+        return(solution)
+      }
+
+      var solve = function() {
+        if (turningFace || turningCenter || rotateCommands.length != 0) return;
+        var moves = computeSolveSequence(allCubies)
+
+        for (var i = 0; i < moves.length; ++i) {
+          pushString(moves[i])
         }
       }
 
       var scramble = function() {
         if (!turningFace && !turningCenter && rotateCommands.length == 0) {
           var result = ''
-          for (var i = 0; i < 100; ++i) {
+          for (var i = 0; i < SCRAMBLE_COUNT; ++i) {
             var center = randomInt(0, 5)
             var dir    = randomInt(0, 1)
             var c
@@ -855,7 +908,24 @@
             randomMove(center, angle)
             result += c
           }
-          console.log(result)
+        }
+      }
+
+      var record = function() {
+        movesAfterStartRecording = ''
+        recordPending = true
+      }
+
+      var rewindComplete = function() {
+        record()
+      }
+
+      var rewind = function() {
+        if (recordPending) {
+            recordPending = false
+            var reverseCmds = reverse(movesAfterStartRecording)
+            pushString(reverseCmds)
+            pushString('Z')  // signal that rewind is complete..
         }
       }
 
@@ -872,22 +942,23 @@
           if (++angleCount == ANGLE_STEPCOUNT) {
             turningFace = false
           }
-          activeGroup.forEach(function(cube) {
-            do_rotate(turningFaceCenterCube, cube, angleIncrement)
+          activeGroup.forEach(function(cubie) {
+            do_rotate(turningFaceCenterCube, cubie, angleIncrement)
           });
         }
+
         if (turningCenter) {
           if (angleCount == ANGLE_STEPCOUNT) {
             turningCenter = false
           }
-          activeGroup2.forEach(function(cube) {
-            do_rotate(turningFaceCenterCube2, cube, angleIncrement2)
+          activeGroup2.forEach(function(cubie) {
+            do_rotate(turningFaceCenterCube2, cubie, angleIncrement2)
           });
           scene.rotateOnAxis(centerFaceAxis, angleIncrement)
         }
 
         requestAnimationFrame(animate);
-        renderer.render(scene, camera);
+        renderer.render(scene0, camera);
       }
 
       animate();
